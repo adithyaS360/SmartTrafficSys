@@ -1,9 +1,11 @@
 # Data Collection Script
 import cv2
+import os
 import time
 
 def collect_data():
     # Initialize camera
+    os.makedirs('data', exist_ok=True)
     cap = cv2.VideoCapture(0)
     while True:
         ret, frame = cap.read()
