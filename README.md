@@ -75,6 +75,6 @@ The system is rigorously tested in both simulated and real-world scenarios. Key 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
-- Special thanks to the Intel team for their resources and support in developing this project.
+- Special thanks to the Intel team and faculty guide for their resources and support in developing this project.
 - Acknowledgment to the contributors and open-source communities whose tools and libraries were essential in creating this system.
 
