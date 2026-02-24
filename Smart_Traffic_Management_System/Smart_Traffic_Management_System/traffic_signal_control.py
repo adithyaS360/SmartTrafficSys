@@ -1,5 +1,6 @@
 # Traffic Signal Control Script
 def control_traffic_signal(data):
+    """Adjust traffic signal timing based on incoming sensor/vehicle data."""
     # Logic to control traffic signals based on data
     pass
 
