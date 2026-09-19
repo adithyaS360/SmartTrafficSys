@@ -99,6 +99,11 @@ DEFAULT_DEMAND = "busy"
 # visitor who leaves it on "rush hour" does not decide the next visitor's demo.
 IDLE_RESET_SECONDS = 180.0
 
+# Vehicles added by a manual surge - enough to visibly build a queue for a
+# minute or so without being absurd. Fixed rather than random: it is a
+# deliberate, repeatable shock, not another draw from the arrival process.
+SURGE_VEHICLES = 18.0
+
 
 def _phases(max_green: float = 50.0) -> List[Phase]:
     return [
@@ -132,14 +137,25 @@ class Junction:
 
     def signal_state(self, now: float) -> Dict[str, Any]:
         c = self.controller
+        phase = c.current_phase
         return {
             "state": c.state.value,
-            "phase": c.current_phase.id,
+            "phase": phase.id,
+            "phase_name": phase.name or phase.id,
             "elapsed": round(c.elapsed(now), 1),
-            "max_green": c.current_phase.max_green,
+            "min_green": phase.min_green,
+            "max_green": phase.max_green,
             "approaches": {cam: c.signal_for(cam) for cam in APPROACHES},
             "last_reason": next((d.reason for d in reversed(c.decisions)
                                  if d.state.value == "yellow"), None),
+            # Last few phase-ending decisions, most recent last - the raw material
+            # for "why did it just do that", which a fixed-time strategy cannot
+            # answer (it only ever says 'fixed_schedule') and adaptive can.
+            "recent_decisions": [
+                {"phase": d.phase_id, "state": d.state.value, "reason": d.reason,
+                 "duration": d.duration_seconds}
+                for d in c.decisions[-6:] if d.state.value == "yellow"
+            ],
         }
 
 
@@ -233,6 +249,23 @@ class ParallelDemo:
     def touch(self) -> None:
         self.last_interaction = time.time()
 
+    def surge(self, approach: str) -> None:
+        """
+        Inject a sudden burst of arrivals into one approach - IDENTICALLY across
+        all three junctions, for the same reason tick() hands them identical
+        Poisson draws: if only one junction got the extra vehicles, whichever
+        recovered faster might just be the one that got the smaller shock. Every
+        junction takes the exact same hit, so however each clears it is down to
+        the controller alone.
+        """
+        if approach not in APPROACHES:
+            return
+        for junction in self.junctions.values():
+            a = junction.approaches[approach]
+            a.queue += SURGE_VEHICLES
+            a.arrived += SURGE_VEHICLES
+        log.info("Surge of {:.0f} vehicles injected on '{}'", SURGE_VEHICLES, approach)
+
     def maybe_idle_reset(self) -> bool:
         """Return to defaults if nobody has touched the controls in a while."""
         if (self.demand != DEFAULT_DEMAND
@@ -322,6 +355,7 @@ class ParallelDemo:
                     "approaches": {
                         cam: {"queue": int(round(a.queue)),
                               "served": int(a.served),
+                              "average_delay": round(a.average_delay, 1),
                               "signal": j.controller.signal_for(cam)}
                         for cam, a in j.approaches.items()
                     },

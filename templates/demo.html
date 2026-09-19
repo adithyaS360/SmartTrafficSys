@@ -85,11 +85,36 @@ h1{font-size:23px;font-weight:650;margin:0;letter-spacing:-0.015em}
 .arm.blank{background:transparent} .arm .q{font-size:15px;font-weight:680;line-height:1}
 .arm .lbl{font-size:9px;opacity:.85;letter-spacing:.06em}
 .arm.mid{background:transparent;color:var(--muted);font-size:12px;font-weight:600}
+.arm.clickable{cursor:pointer}
+.arm.clickable:hover{outline:2px solid var(--adaptive);outline-offset:1px}
+.arm.clickable:active{transform:scale(0.94)}
 
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px}
 .stat{text-align:center;padding:10px 6px;border:1px solid var(--border);border-radius:9px}
 .stat .v{font-size:22px;font-weight:640;letter-spacing:-0.02em}
 .stat .k{font-size:11px;color:var(--muted);margin-top:2px}
+
+.hint{text-align:center;color:var(--muted);font-size:12px;margin:2px 0 14px}
+.detail-btn{display:block;margin:10px auto 0;background:none;border:none;color:var(--adaptive);
+            font:inherit;font-size:12px;cursor:pointer;padding:2px}
+.detail-btn:hover{text-decoration:underline}
+
+dialog#detail{background:var(--surface);color:var(--ink);border:1px solid var(--border);
+              border-radius:var(--radius);padding:0;max-width:520px;width:92vw}
+dialog#detail::backdrop{background:rgba(0,0,0,0.5)}
+.detail-head{display:flex;align-items:center;justify-content:space-between;
+             padding:16px 18px;border-bottom:1px solid var(--border)}
+.detail-head h3{margin:0;font-size:16px;font-weight:620}
+.detail-close{background:none;border:none;color:var(--muted);font-size:20px;
+              cursor:pointer;line-height:1;padding:2px 6px}
+.detail-close:hover{color:var(--ink)}
+.detail-body{padding:16px 18px;font-size:13px;line-height:1.5}
+.detail-body .muted{color:var(--muted);margin:0 0 10px}
+.detail-table{width:100%;border-collapse:collapse;margin:10px 0;font-size:12px}
+.detail-table th,.detail-table td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--border)}
+.detail-table th{color:var(--muted);font-weight:600}
+.decisions{margin:6px 0 0;padding-left:18px;color:var(--ink-2)}
+.decisions li{margin-bottom:3px}
 
 /* ---- chart ---- */
 .chead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px}
@@ -135,11 +160,14 @@ footer{margin-top:24px;text-align:center;color:var(--muted);font-size:12px}
   <div class="demand" id="demand"></div>
   <p class="note" id="note"></p>
 
-  <div class="grid three" style="margin-bottom:14px">
+  <div class="grid three" style="margin-bottom:6px">
     <section class="card" id="panel-naive"></section>
     <section class="card" id="panel-webster"></section>
     <section class="card" id="panel-adaptive"></section>
   </div>
+  <p class="hint">Click a direction in any diagram to send a sudden burst of traffic that
+     way &mdash; identically to all three &mdash; and watch each one recover differently.
+     &ldquo;Cycle details&rdquo; shows why a junction just made its last decision.</p>
 
   <section class="card">
     <div class="chead">
@@ -203,6 +231,14 @@ footer{margin-top:24px;text-align:center;color:var(--muted);font-size:12px}
   </footer>
 </div>
 
+<dialog id="detail">
+  <div class="detail-head">
+    <h3 id="detail-title"></h3>
+    <button class="detail-close" id="detail-close" type="button" aria-label="Close">&times;</button>
+  </div>
+  <div class="detail-body" id="detail-body"></div>
+</dialog>
+
 <script>
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -230,10 +266,10 @@ async function poll() {
   } catch (e) { /* cold start or a blip - the next poll will catch up */ }
 }
 
-async function post(url, payload) {
+async function post(url, payload, label) {
   busy = true;
   $("hero").classList.add("warming");
-  $("hero-big").textContent = "re-running…";
+  $("hero-big").textContent = label || "re-running…";
   try {
     const res = await fetch(url, {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -300,7 +336,9 @@ function drawDemand(d) {
 function drawPanel(key, j, colourVar) {
   const arm = cam => {
     const a = j.approaches[cam];
-    return `<div class="arm ${a.signal}"><span class="q">${a.queue}</span>
+    return `<div class="arm ${a.signal} clickable" data-approach="${cam}"
+                 title="Send a surge of traffic from ${cam} (hits all three junctions)">
+            <span class="q">${a.queue}</span>
             <span class="lbl">${cam[0].toUpperCase()}</span></div>`;
   };
   $("panel-" + key).innerHTML = `
@@ -321,8 +359,59 @@ function drawPanel(key, j, colourVar) {
         <div class="k">average wait</div></div>
       <div class="stat"><div class="v">${j.totals.queue.toFixed(0)}</div>
         <div class="k">waiting now</div></div>
-    </div>`;
+    </div>
+    <button class="detail-btn" type="button" data-junction="${key}">Cycle details &rarr;</button>`;
 }
+
+/* ---- detail dialog ---------------------------------------------------- */
+
+function openDetail(key) {
+  if (!last) return;
+  const j = last.junctions[key];
+  const s = j.signal;
+
+  const rows = Object.entries(j.approaches).map(([cam, a]) =>
+    `<tr><td>${cam}</td><td>${a.queue}</td><td>${a.served}</td>
+       <td>${a.average_delay.toFixed(1)}s</td><td>${a.signal}</td></tr>`).join("");
+
+  const decisions = s.recent_decisions.slice().reverse().map(d =>
+    `<li><strong>${d.phase}</strong> ended (${d.reason.replace(/_/g, " ")}) after
+        holding ${d.duration.toFixed(1)}s</li>`).join("")
+    || "<li>still on the first phase &mdash; nothing to show yet</li>";
+
+  const webster = key === "webster" ? (() => {
+    const w = last.webster_plan;
+    return `<p class="muted">Computed by Webster's method: ${w.cycle}s cycle,
+             ${w.green.ns}s / ${w.green.ew}s split (critical flow ratio
+             Y&nbsp;=&nbsp;${w.critical_ratio}).</p>`;
+  })() : "";
+
+  $("detail-title").textContent = j.label;
+  $("detail-body").innerHTML = `
+    <p class="muted">${j.description}</p>
+    ${webster}
+    <p><strong>Right now:</strong> phase <strong>${s.phase_name}</strong> is
+       <strong>${s.state}</strong>, ${s.elapsed.toFixed(0)}s in
+       (min ${s.min_green}s, max ${s.max_green}s).</p>
+    <table class="detail-table">
+      <thead><tr><th>Approach</th><th>Queue</th><th>Served</th><th>Avg wait</th><th>Signal</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p style="margin-bottom:4px"><strong>Recent decisions</strong> (most recent first)</p>
+    <ul class="decisions">${decisions}</ul>`;
+  $("detail").showModal();
+}
+
+document.addEventListener("click", e => {
+  const armEl = e.target.closest(".arm.clickable");
+  if (armEl) { post("/api/demo/surge", {approach: armEl.dataset.approach}, "sending a surge…"); return; }
+
+  const detailBtn = e.target.closest(".detail-btn");
+  if (detailBtn) { openDetail(detailBtn.dataset.junction); return; }
+
+  if (e.target.id === "detail-close") { $("detail").close(); return; }
+  if (e.target === $("detail")) { $("detail").close(); }   // click on backdrop
+});
 
 /* Hand-rolled SVG: one chart does not justify a charting library, and keeping
    the page self-contained means no CDN to be slow or disappear. */

@@ -44,10 +44,24 @@ log = get_logger(__name__)
 SPEED = float(os.environ.get("DEMO_SPEED", "8"))
 # Simulated minutes to run at startup so the page is never empty on arrival.
 WARMUP_MINUTES = float(os.environ.get("DEMO_WARMUP_MINUTES", "12"))
+# Stop simulating once nobody has asked for the page in this long.
+#
+# WHY: without this the loop ticks eight times a second forever, burning CPU
+# around the clock to advance a simulation nobody is looking at. On a host that
+# bills by CPU-second (Cloud Run) that exhausts a free allowance in days; on one
+# with a CPU-seconds-per-day cap (PythonAnywhere) it is over in minutes. Idling
+# when unobserved costs nothing - the simulation resumes exactly where it
+# stopped, because its clock only advances when it ticks.
+IDLE_PAUSE_SECONDS = float(os.environ.get("DEMO_IDLE_PAUSE", "90"))
 
 demo = ParallelDemo()
 _lock = threading.Lock()
 _started = False
+_last_request = time.time()
+
+
+def viewers_present() -> bool:
+    return (time.time() - _last_request) < IDLE_PAUSE_SECONDS
 
 
 def warmup() -> None:
@@ -62,9 +76,14 @@ def warmup() -> None:
 
 
 def run_loop() -> None:
-    """Advance the simulation continuously in the background."""
+    """Advance the simulation, but only while somebody is actually watching."""
     interval = demo.dt / SPEED
     while True:
+        if not viewers_present():
+            # Nobody here. Check back in a second rather than simulating into
+            # the void. The simulation is frozen, not reset.
+            time.sleep(1.0)
+            continue
         began = time.time()
         with _lock:
             demo.tick()
@@ -92,6 +111,14 @@ def ensure_started() -> None:
 
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+
+
+@app.before_request
+def _mark_active():
+    """Any request counts as somebody watching, which un-idles the simulation."""
+    global _last_request
+    if request.path != "/api/health":        # health probes are not viewers
+        _last_request = time.time()
 
 
 @app.get("/")
@@ -126,6 +153,26 @@ def set_demand():
         return jsonify({"data": demo.snapshot()})
 
 
+@app.post("/api/demo/surge")
+def surge():
+    """
+    Inject a burst of traffic into one approach, live. Lets a visitor trigger
+    the congestion themselves instead of only watching numbers scroll by.
+    """
+    ensure_started()
+    body = request.get_json(silent=True) or {}
+    approach = body.get("approach")
+    if approach not in ("north", "south", "east", "west"):
+        return jsonify({"error": {
+            "code": "bad_approach",
+            "message": "approach must be one of north/south/east/west",
+        }}), 400
+    with _lock:
+        demo.surge(approach)
+        demo.touch()
+        return jsonify({"data": demo.snapshot()})
+
+
 @app.post("/api/demo/reset")
 def reset():
     ensure_started()
@@ -140,7 +187,8 @@ def reset():
 @app.get("/api/health")
 def health():
     """Render's health check hits this. Kept trivial so it never wakes the sim."""
-    return jsonify({"status": "ok", "running": _started, "speed": SPEED}), 200
+    return jsonify({"status": "ok", "running": _started, "speed": SPEED,
+                    "simulating": viewers_present()}), 200
 
 
 @app.errorhandler(404)
