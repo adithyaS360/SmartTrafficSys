@@ -1,7 +1,74 @@
+# Secrets - never commit
+.env
+*.pem
+*.key
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+.venv/
 venv/
 env/
-data/
+build/
+dist/
+
+# ---------------------------------------------------------------------------
+# Generated data. None of this is source, and all of it is large.
+#
+# The database in particular: `tools/simulate.py generate --days 21` produces
+# a file of tens of megabytes. Committing it puts generated rows into the
+# history permanently - git keeps every version forever, so deleting it later
+# does not shrink the repository.
+# ---------------------------------------------------------------------------
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/traffic.db*
+
+# Model weights - downloaded automatically on first run, or trained locally.
+# Matched at any depth, not just models/: ultralytics drops yolov8n.pt into
+# whatever directory you happen to run from.
+*.pt
+*.pth
+*.onnx
 *.weights
+*.keras
+*.h5
+*.npz
+
+# Footage
+data/*.mp4
+data/*.avi
+data/*.mov
+data/*.mkv
+data/*.webm
+data/frames/
+
+# Runtime output
+logs/
+*.log
+
+# Tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# Scratch folder the desktop app writes into - not part of the project.
+# The dashboard screenshots worth keeping live in docs/ instead.
+Claude outputs/
+
+# Old superseded scaffold - kept on disk for reference, not tracked.
+Smart_Traffic_Management_System/

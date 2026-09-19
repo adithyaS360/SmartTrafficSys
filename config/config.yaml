@@ -1,0 +1,146 @@
+# Smart Traffic Management System - configuration
+#
+# Anything secret (passwords, keys) belongs in .env and is referenced here as
+# ${VAR}. config.yaml is safe to commit; .env is not.
+
+# ---------------------------------------------------------------------------
+# Database.
+#
+# Running on SQLite for development - no server to install, the whole database
+# is one file. Everything above this layer is backend-agnostic, so moving to
+# Postgres later is:
+#     1. set type: "postgresql"
+#     2. put a real DB_PASSWORD in .env
+#     3. alembic upgrade head
+# The models, queries and application code do not change.
+#
+# The one thing SQLite will NOT do is serve several machines at once. Stay on it
+# until you outgrow a single box, then switch.
+# ---------------------------------------------------------------------------
+database:
+  type: "sqlite"
+  path: "data/traffic.db"      # used when type is sqlite
+
+  # Used when type is postgresql. Ignored on sqlite.
+  host: "${DB_HOST:-localhost}"
+  port: 5432
+  name: "${DB_NAME:-traffic_db}"
+  user: "${DB_USER:-traffic_user}"
+  password: "${DB_PASSWORD:-}"
+  pool_size: 10
+  echo: false                  # true logs every SQL statement - useful when debugging
+
+model:
+  # yolov8n = "nano": the smallest and fastest variant. Start here; move to
+  # yolov8s/m only if accuracy on real footage proves insufficient. The file is
+  # downloaded automatically by ultralytics on first run.
+  weights_path: "models/yolov8n.pt"
+  confidence_threshold: 0.5
+  iou_threshold: 0.45
+  device: "cpu"          # "cuda" if you have an NVIDIA GPU
+
+# ---------------------------------------------------------------------------
+# Cameras. Add a junction by adding a block here - no code changes needed.
+#
+# source can be:
+#   0                      USB webcam
+#   "data/junction.mp4"    video file (best for development - no hardware)
+#   "rtsp://user:pass@host:554/stream"   IP camera
+#
+# counting_line: two points forming a line across the road, at the stop line.
+#   Vehicles are counted once each as they cross it. This produces flow rate,
+#   which is the main input to the signal controller and the ML model.
+#   YOU MUST SET THIS PER CAMERA once you have real footage - the default is a
+#   placeholder and will give meaningless numbers.
+#
+# pixels_per_meter: how many pixels span one real metre at the counting line.
+#   Measure against something of known width - a lane is about 3.5m. Leave it
+#   out and speeds are reported as "uncalibrated" rather than as a fake number.
+# ---------------------------------------------------------------------------
+cameras:
+  # CALIBRATED AGAINST data/sample_traffic_720p.mp4 - these are measured values,
+  # not placeholders. Verified end to end: 9-11 vehicles counted over 21.5s,
+  # cars at 99-113 km/h and trucks at 65-78 km/h, which is what the footage shows.
+  #
+  # Replace this block when you switch to your own footage - run
+  #   python tools/calibrate.py <your video> --name <name>
+  # and paste what it prints.
+  highway_bridge:
+    id: "cam_1"
+    name: "Highway - view from overbridge"
+    source: "data/sample_traffic_720p.mp4"
+    direction: "south"
+    roi:                       # excludes sky and the distant road near the horizon
+      x1: 120
+      y1: 300
+      x2: 1200
+      y2: 715
+    # Spans both carriageways. Southbound traffic crosses one way and northbound
+    # the other, so count_forward / count_backward separate the two directions.
+    counting_line: [[200, 450], [1180, 450]]
+    # LONGITUDINAL scale - measured ALONG the road, not across it. Lane width
+    # here gives ~53 px/m, which is the lateral scale and is NOT interchangeable:
+    # using it reported motorway traffic at 4.7 km/h. See tools/calibrate.py.
+    pixels_per_meter: 7.5
+    speed_zone_height: 220     # band around the counting line where 7.5 holds
+    fps: 25
+
+# ---------------------------------------------------------------------------
+# Traffic signals.
+#
+# A REAL intersection needs at least TWO phases - with one phase nothing ever
+# yields and there is nothing to control, and IntersectionController refuses to
+# start. Only one is defined here because the sample footage has only one
+# camera, on a motorway with no junction. Add a second phase (and its cameras)
+# when you have footage of an actual intersection.
+#
+# In the meantime tools/simulate.py defines its own four-approach, two-phase
+# junction, which is what the delay comparison is measured on.
+#
+# min/max green are safety bounds enforced by the state machine, not
+# suggestions: no strategy can end a green below green_min or run one past
+# green_max, however confident it is. green_min protects drivers who have
+# already started moving; green_max stops one approach starving the others.
+# ---------------------------------------------------------------------------
+traffic_signals:
+  signal_1:
+    id: "sig_1"
+    name: "Main Intersection - north-south phase"
+    camera_id: "cam_1"
+    gpio_pin: 17               # Raspberry Pi GPIO, unused in simulation
+    timings:
+      green_min: 10            # hard floor; below 5 is rejected as unsafe
+      green_max: 50            # hard ceiling; the starvation guard
+      yellow: 3                # below 3 is rejected as unsafe
+      all_red: 2               # clearance gap between phases
+
+traffic_control:
+  algorithm: "adaptive"        # "fixed" | "adaptive" | "ml_based"
+  queue_threshold: 10          # queued vehicles above which we extend green
+  extension_seconds: 5         # how much to extend by, per decision
+  update_interval: 5           # seconds between control decisions
+  prediction_window: 15        # minutes ahead the LSTM forecasts (Phase 3)
+
+data_storage:
+  bucket_seconds: 5            # frames are aggregated into windows this wide
+  batch_size: 50               # rows buffered before a DB write
+  flush_interval: 10           # seconds - flush even if the batch is not full
+  grace_seconds: 1             # wait this long past a bucket's end for late frames
+  retention_days: 90
+
+logging:
+  level: "INFO"
+  file: "logs/traffic_system.log"
+  rotation: "10 MB"
+  retention: 5
+
+webapp:
+  host: "0.0.0.0"
+  port: 5000
+  debug: false
+
+features:
+  enable_ml_predictions: false
+  enable_emergency_detection: false
+  enable_pedestrian_detection: true
+  enable_realtime_dashboard: true

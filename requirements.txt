@@ -1,0 +1,44 @@
+# Smart Traffic Management System - core dependencies
+#
+# This file covers Phases 1, 2, 4 and 5: detection, tracking, storage, API and
+# dashboard. The machine-learning stack (Phase 3) is in requirements-ml.txt,
+# deliberately separate - TensorFlow is a ~500MB download with strict Python
+# version constraints, and there is no reason to fight that before you need it.
+#
+#     pip install -r requirements.txt
+#
+# Version ranges rather than exact pins: exact pins routinely have no wheel for
+# whichever Python you happen to have, and the failure ("no matching
+# distribution") does not explain itself.
+
+# --- computer vision ---
+opencv-python>=4.9,<5.0
+ultralytics>=8.1,<9.0          # YOLOv8; downloads weights on first run
+numpy>=1.24,<2.0               # <2.0: opencv and ultralytics wheels still expect 1.x
+Pillow>=10.0
+
+# --- tracking ---
+scipy>=1.11                    # linear_sum_assignment, for track-to-detection matching
+
+# --- database ---
+SQLAlchemy>=2.0,<3.0
+alembic>=1.13                  # schema migrations
+psycopg2-binary>=2.9           # Postgres driver; unused while database.type is sqlite
+
+# --- web ---
+Flask>=3.0,<4.0
+Flask-SocketIO>=5.3            # websockets for the live dashboard
+python-socketio>=5.10
+
+# --- config and logging ---
+PyYAML>=6.0
+python-dotenv>=1.0
+loguru>=0.7
+
+# --- data handling ---
+pandas>=2.0                    # used by the API layer and model training prep
+
+# --- development (optional) ---
+# pytest>=7.4
+# black>=23.12
+# flake8>=6.1

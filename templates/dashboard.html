@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traffic Control</title>
+<!-- Inline favicon: without one the browser requests /favicon.ico on every
+     load and logs a 404, which buries real errors in the console. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230ca30c'/></svg>">
+<style>
+/* ---------------------------------------------------------------------------
+   Design tokens. Dark mode is declared under BOTH the media query (OS setting)
+   and the data-theme scope (the toggle), so the toggle wins either way.
+   Series colours are the validated categorical slots 1-4.
+   --------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --plane:      #f9f9f7;
+  --surface:    #fcfcfb;
+  --ink:        #0b0b0b;
+  --ink-2:      #52514e;
+  --muted:      #898781;
+  --grid:       #e1e0d9;
+  --axis:       #c3c2b7;
+  --border:     rgba(11,11,11,0.10);
+  --s1: #2a78d6;  --s2: #eb6834;  --s3: #1baf7a;  --s4: #eda100;
+  --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --plane: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+    --muted: #898781; --grid: #2c2c2a; --axis: #383835;
+    --border: rgba(255,255,255,0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+  --muted: #898781; --grid: #2c2c2a; --axis: #383835;
+  --border: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0 16px 48px;
+  background: var(--plane); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.wrap { max-width: 1180px; margin: 0 auto; }
+
+header {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 24px 0 18px;
+}
+h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.badge {
+  font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--ink-2); background: var(--surface);
+}
+.live { margin-left: auto; display: flex; align-items: center; gap: 7px;
+        font-size: 13px; color: var(--ink-2); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
+.dot.stale { background: var(--critical); }
+.theme-btn {
+  background: var(--surface); border: 1px solid var(--border); color: var(--ink-2);
+  border-radius: var(--radius); padding: 5px 10px; font: inherit; font-size: 13px;
+  cursor: pointer;
+}
+
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px;
+}
+.grid { display: grid; gap: 14px; }
+/* min-width:0 on grid children. A grid item defaults to min-width:auto, which
+   means it refuses to shrink below its content - so a wide table inside a card
+   pushes the whole column out, and the overflow-x on its own scroll container
+   never gets the chance to clip it. This one line is the difference between a
+   scrollable table and a page that scrolls sideways on a phone. */
+.grid > * { min-width: 0; }
+.cols-2 { grid-template-columns: minmax(280px, 340px) 1fr; }
+.cols-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 880px) { .cols-2, .cols-4 { grid-template-columns: 1fr; } }
+
+h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.03em;
+     text-transform: uppercase; color: var(--muted); margin: 0 0 14px; }
+
+/* ---- signal ---- */
+.junction { display: grid; grid-template-columns: repeat(3, 1fr);
+            gap: 6px; aspect-ratio: 1; max-width: 220px; margin: 0 auto 16px; }
+.arm { border-radius: 8px; display: grid; place-items: center;
+       font-size: 11px; font-weight: 600; text-transform: uppercase;
+       letter-spacing: 0.04em; color: var(--surface);
+       background: var(--axis); transition: background 200ms ease; }
+.arm.green  { background: var(--good); }
+.arm.yellow { background: var(--warning); color: #0b0b0b; }
+.arm.red    { background: var(--critical); }
+.arm.center { background: transparent; color: var(--muted); font-size: 22px;
+              font-weight: 650; }
+.arm.blank  { background: transparent; }
+
+.phase-line { display: flex; justify-content: space-between; align-items: baseline;
+              font-size: 13px; color: var(--ink-2); margin-bottom: 6px; }
+.bar { height: 6px; border-radius: 999px; background: var(--grid); overflow: hidden; }
+.bar > i { display: block; height: 100%; border-radius: 999px;
+           background: var(--s1); transition: width 300ms linear; }
+.bar-marks { position: relative; height: 14px; font-size: 11px; color: var(--muted); }
+.bar-marks span { position: absolute; transform: translateX(-50%); }
+
+.controls { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.controls button {
+  flex: 1; min-width: 96px; background: transparent; color: var(--ink-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 7px 10px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.controls button:hover { border-color: var(--muted); color: var(--ink); }
+.controls button[aria-pressed="true"] { border-color: var(--s1); color: var(--s1); }
+.hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+/* ---- stat tiles ---- */
+.tile .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.tile .value { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+.tile .unit  { font-size: 13px; color: var(--ink-2); font-weight: 400; margin-left: 3px; }
+
+/* ---- chart ---- */
+.chart-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+              margin-bottom: 10px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-left: auto;
+          font-size: 12px; color: var(--ink-2); }
+.legend b { display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+            margin-right: 5px; vertical-align: -1px; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+.tip {
+  position: fixed; pointer-events: none; z-index: 20; opacity: 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; font-size: 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.13); transition: opacity 120ms;
+  min-width: 132px;
+}
+.tip .t-time { color: var(--muted); margin-bottom: 5px; }
+.tip .t-row { display: flex; justify-content: space-between; gap: 14px;
+              font-variant-numeric: tabular-nums; }
+.tip .t-row b { display: inline-block; width: 8px; height: 8px; border-radius: 2px;
+                margin-right: 5px; vertical-align: -1px; }
+
+/* ---- tables ---- */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px;
+     text-transform: uppercase; letter-spacing: 0.04em;
+     padding: 0 10px 8px 0; border-bottom: 1px solid var(--border); }
+td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--border);
+     font-variant-numeric: tabular-nums; color: var(--ink-2); }
+td.name { color: var(--ink); font-variant-numeric: normal; }
+tr:last-child td { border-bottom: 0; }
+.swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+          margin-right: 7px; vertical-align: -1px; }
+.pill { font-size: 11px; padding: 1px 7px; border-radius: 999px;
+        border: 1px solid var(--border); color: var(--ink-2); }
+.pill.green { color: var(--good); border-color: var(--good); }
+.pill.yellow { color: #8a6000; border-color: var(--warning); }
+.pill.red { color: var(--critical); border-color: var(--critical); }
+details { margin-top: 14px; }
+summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+/* overflow-x too: the decisions table has six columns and will not fit a phone.
+   Scrolling it inside its card keeps the PAGE from scrolling sideways, which is
+   the thing that actually feels broken. */
+.scroll { max-height: 260px; overflow-y: auto; overflow-x: auto;
+          max-width: 100%; }
+/* The chart's table view is a fallback for the chart, not a data grid - five
+   narrow numeric columns fit a phone unaided, so it takes no minimum width.
+   It also lives inside a closed <details>, whose contents Chromium still lays
+   out for scrollWidth purposes; a min-width there widened the page even though
+   nothing was visible. */
+#chart-table { min-width: 0; }
+.empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+/* The max marker sits at the right end of the bar; centring it there would push
+   it past the card edge, so anchor its right edge instead. */
+.bar-marks span:last-child { transform: translateX(-100%); }
+@media (max-width: 880px) {
+  body { padding: 0 12px 40px; }
+  .card { padding: 14px; }
+  /* Scoped to .scroll: a bare `table { min-width }` also hit the tables that
+     have no scrolling parent, so instead of fixing the 17px page overflow it
+     grew it to 72px. Only a table that can scroll inside its card may be wider
+     than the card. */
+  .scroll table { min-width: 400px; }
+  .tile .value { font-size: 24px; }
+  .junction { max-width: 180px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Traffic Control</h1>
+    <span class="badge" id="mode-badge">{{ mode }}</span>
+    <span class="badge" id="strategy-badge">-</span>
+    <div class="live">
+      <span class="dot" id="dot"></span><span id="live-text">connecting</span>
+      <button class="theme-btn" id="theme" type="button">Theme</button>
+    </div>
+  </header>
+
+  <div class="grid cols-2" style="margin-bottom:14px">
+
+    <section class="card">
+      <h2>Signal</h2>
+      <div class="junction" id="junction">
+        <div class="arm blank"></div><div class="arm" data-arm="north">N</div><div class="arm blank"></div>
+        <div class="arm" data-arm="west">W</div>
+        <div class="arm center" id="phase-name">-</div>
+        <div class="arm" data-arm="east">E</div>
+        <div class="arm blank"></div><div class="arm" data-arm="south">S</div><div class="arm blank"></div>
+      </div>
+
+      <div class="phase-line">
+        <span id="phase-state">-</span>
+        <span id="phase-elapsed" style="font-variant-numeric:tabular-nums">-</span>
+      </div>
+      <div class="bar"><i id="phase-bar" style="width:0%"></i></div>
+      <div class="bar-marks"><span id="mark-min">min</span><span id="mark-max">max</span></div>
+
+      <div class="controls" id="controls"></div>
+      <p class="hint" id="override-hint">
+        An override is queued, not applied &mdash; it takes effect after minimum
+        green and passes through yellow like any other change.
+      </p>
+    </section>
+
+    <div class="grid" style="align-content:start">
+      <div class="grid cols-4">
+        <div class="card tile"><div class="label">Total queue</div>
+          <div class="value" id="k-queue">-</div></div>
+        <div class="card tile"><div class="label">Arrival flow</div>
+          <div class="value" id="k-flow">-<span class="unit">/min</span></div></div>
+        <div class="card tile"><div class="label">Mean wait</div>
+          <div class="value" id="k-wait">-<span class="unit">s</span></div></div>
+        <div class="card tile"><div class="label">Rows stored</div>
+          <div class="value" id="k-rows">-</div></div>
+      </div>
+
+      <section class="card">
+        <div class="chart-head">
+          <h2 style="margin:0">Queue length</h2>
+          <span class="badge" id="chart-range">last 30 min</span>
+          <div class="legend" id="legend"></div>
+        </div>
+        <svg id="chart" viewBox="0 0 760 240" role="img"
+             aria-label="Queue length over time by approach"></svg>
+        <details id="table-details">
+          <summary>Table view (accessible alternative to the chart)</summary>
+          <div class="scroll"><table id="chart-table"><tbody></tbody></table></div>
+        </details>
+      </section>
+    </div>
+  </div>
+
+  <div class="grid cols-2">
+    <section class="card">
+      <h2>Approaches</h2>
+      <div class="scroll" style="max-height:none"><table><thead><tr>
+        <th>Approach</th><th>Signal</th><th>Queue</th><th>Flow</th><th>Wait</th>
+      </tr></thead><tbody id="approach-rows"></tbody></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Recent decisions</h2>
+      <div class="scroll"><table><thead><tr>
+        <th>Time</th><th>Phase</th><th>State</th><th>Held</th><th>Reason</th><th>Queue</th>
+      </tr></thead><tbody id="decision-rows"></tbody></table></div>
+    </section>
+  </div>
+
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+const SIGNAL_ID = {{ (signal_id | tojson) if signal_id else 'null' }};
+const SERIES = ["north", "south", "east", "west"];
+const SERIES_VAR = { north: "--s1", south: "--s2", east: "--s3", west: "--s4" };
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const $ = id => document.getElementById(id);
+
+/* ---- theme toggle ---------------------------------------------------- */
+$("theme").addEventListener("click", () => {
+  const dark = document.documentElement.getAttribute("data-theme") === "dark"
+    || (!document.documentElement.hasAttribute("data-theme")
+        && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+  try { localStorage.setItem("theme", dark ? "light" : "dark"); } catch (e) {}
+  drawChart();   // series colours differ per mode; re-render rather than flip
+});
+try {
+  const saved = localStorage.getItem("theme");
+  if (saved) document.documentElement.setAttribute("data-theme", saved);
+} catch (e) {}
+
+/* ---- state ----------------------------------------------------------- */
+let history = {};            // camera -> [{t, q}]
+SERIES.forEach(s => history[s] = []);
+const WINDOW_MS = 30 * 60 * 1000;
+
+async function get(url) {
+  const res = await fetch(url);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body?.error?.message || res.statusText);
+  return body.data;
+}
+
+/* Seed the chart from stored history rather than starting empty.
+   The database already holds these buckets; building the series only from
+   live polling meant a freshly opened dashboard showed a near-empty chart
+   with every point crushed against the right edge, and took half an hour to
+   become useful. One request per approach at load fixes that. */
+async function seedHistory() {
+  await Promise.all(SERIES.map(async cam => {
+    try {
+      const rows = await get(`/api/cameras/${cam}/series?minutes=30`);
+      history[cam] = rows.map(r => ({ t: Date.parse(r.timestamp), q: r.queue_length }));
+    } catch (e) { /* no stored history yet - live polling will fill it */ }
+  }));
+}
+
+/* ---- polling --------------------------------------------------------- */
+/* Polling rather than websockets: one request a second for four approaches is
+   well within what HTTP handles comfortably, and it avoids a second protocol,
+   a second dependency, and reconnection logic for no measurable gain. */
+async function tick() {
+  try {
+    const data = await get("/api/status");
+    renderSignal(data.signal);
+    renderApproaches(data.cameras, data.signal);
+    renderTotals(data);
+    pushHistory(data.cameras);
+    drawChart();
+    setLive(true);
+  } catch (err) {
+    setLive(false, err.message);
+  }
+}
+
+function setLive(ok, msg) {
+  $("dot").className = "dot" + (ok ? "" : " stale");
+  $("live-text").textContent = ok ? "live" : (msg || "disconnected");
+}
+
+function pushHistory(cameras) {
+  const now = Date.now();
+  SERIES.forEach(cam => {
+    const snap = cameras[cam];
+    if (!snap) return;
+    history[cam].push({ t: now, q: snap.queue_length });
+    history[cam] = history[cam].filter(p => now - p.t <= WINDOW_MS);
+  });
+}
+
+/* ---- signal ---------------------------------------------------------- */
+function renderSignal(sig) {
+  if (!sig) { $("phase-name").textContent = "-"; return; }
+  $("strategy-badge").textContent = sig.strategy;
+  $("phase-name").textContent = sig.current_phase.toUpperCase();
+  $("phase-state").textContent = sig.state.replace("_", " ");
+  $("phase-elapsed").textContent = sig.elapsed_seconds.toFixed(0) + "s";
+
+  document.querySelectorAll("[data-arm]").forEach(el => {
+    const shown = (sig.approaches || {})[el.dataset.arm] || "red";
+    el.className = "arm " + shown;
+  });
+
+  const pct = Math.min(100, sig.elapsed_seconds / sig.max_green * 100);
+  $("phase-bar").style.width = pct + "%";
+  $("phase-bar").style.background =
+    sig.state === "green" ? css("--good")
+    : sig.state === "yellow" ? css("--warning") : css("--axis");
+  $("mark-min").style.left = (sig.min_green / sig.max_green * 100) + "%";
+  $("mark-min").textContent = "min " + sig.min_green + "s";
+  $("mark-max").style.left = "100%";
+  $("mark-max").textContent = "max " + sig.max_green + "s";
+
+  if (!$("controls").dataset.built && SIGNAL_ID) buildControls(sig);
+  document.querySelectorAll("#controls button[data-phase]").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.phase === sig.pending_override)));
+  $("override-hint").style.display = SIGNAL_ID ? "" : "none";
+}
+
+function buildControls(sig) {
+  const box = $("controls");
+  box.dataset.built = "1";
+  Object.keys(sig.approaches || {}).length && ["ns", "ew"].forEach(pid => {
+    const b = document.createElement("button");
+    b.textContent = "Serve " + pid.toUpperCase();
+    b.dataset.phase = pid;
+    b.onclick = () => fetch(`/api/signals/${SIGNAL_ID}/override`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phase_id: pid })
+    });
+    box.appendChild(b);
+  });
+  const clear = document.createElement("button");
+  clear.textContent = "Clear";
+  clear.onclick = () => fetch(`/api/signals/${SIGNAL_ID}/override`, { method: "DELETE" });
+  box.appendChild(clear);
+}
+
+/* ---- tiles and tables ------------------------------------------------ */
+function renderTotals(data) {
+  $("k-queue").textContent = data.totals.queue_length;
+  $("k-flow").innerHTML = data.totals.flow_rate.toFixed(0) + '<span class="unit">/min</span>';
+  const waits = Object.values(data.cameras).filter(Boolean).map(c => c.avg_dwell_seconds);
+  const mean = waits.length ? waits.reduce((a, b) => a + b, 0) / waits.length : 0;
+  $("k-wait").innerHTML = mean.toFixed(1) + '<span class="unit">s</span>';
+}
+
+async function renderHealth() {
+  try {
+    const h = await get("/api/health");
+    $("k-rows").textContent = h.rows_written.toLocaleString();
+  } catch (e) { $("k-rows").textContent = "-"; }
+}
+
+function renderApproaches(cameras, sig) {
+  const rows = SERIES.filter(c => cameras[c]).map(cam => {
+    const c = cameras[cam];
+    const shown = (sig?.approaches || {})[cam] || "red";
+    return `<tr>
+      <td class="name"><span class="swatch" style="background:var(${SERIES_VAR[cam]})"></span>${cam}</td>
+      <td><span class="pill ${shown}">${shown}</span></td>
+      <td>${c.queue_length}</td>
+      <td>${c.flow_rate.toFixed(1)}</td>
+      <td>${c.avg_dwell_seconds.toFixed(1)}s</td></tr>`;
+  });
+  $("approach-rows").innerHTML = rows.join("") ||
+    '<tr><td colspan="5" class="empty">No approaches reporting.</td></tr>';
+}
+
+async function loadDecisions() {
+  if (!SIGNAL_ID) return;
+  try {
+    const rows = await get(`/api/signals/${SIGNAL_ID}/decisions?limit=25`);
+    $("decision-rows").innerHTML = rows.map(d => `<tr>
+        <td>${new Date(d.timestamp).toLocaleTimeString()}</td>
+        <td class="name">${d.phase_id}</td>
+        <td><span class="pill ${d.state === 'all_red' ? 'red' : d.state}">${d.state.replace('_',' ')}</span></td>
+        <td>${d.duration_seconds.toFixed(0)}s</td>
+        <td class="name">${d.reason.replace(/_/g, " ")}</td>
+        <td>${d.queue_at_decision ?? "-"}</td></tr>`).join("") ||
+      '<tr><td colspan="6" class="empty">No decisions yet.</td></tr>';
+  } catch (e) { /* the status poll already reports connectivity */ }
+}
+
+/* ---- chart ----------------------------------------------------------- */
+/* Hand-rolled SVG rather than a charting library: one line chart does not
+   justify a dependency, and it keeps the page self-contained and offline. */
+const PAD = { l: 38, r: 54, t: 12, b: 26 };   /* right pad holds direct labels */
+const W = 760, H = 240;
+
+function drawChart() {
+  const svg = $("chart");
+  const series = SERIES.filter(s => history[s].length > 1);
+  if (!series.length) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle"
+      fill="${css('--muted')}" font-size="13">collecting data…</text>`;
+    return;
+  }
+
+  /* Scale x to the data that actually exists, not to a fixed 30-minute window.
+     A fixed window squeezed a freshly-seeded chart into a few pixels at the
+     right-hand edge - technically correct, unreadable. A two-minute floor
+     stops three points from stretching across the whole width. */
+  const now = Date.now();
+  const earliest = Math.min(...series.map(s => history[s][0].t));
+  const span = Math.min(WINDOW_MS, Math.max(2 * 60000, now - earliest));
+  const t0 = now - span;
+  $("chart-range").textContent = span >= WINDOW_MS
+    ? "last 30 min" : `last ${Math.round(span / 60000)} min`;
+
+  const maxQ = Math.max(4, ...series.flatMap(s => history[s].map(p => p.q))) * 1.15;
+  const x = t => PAD.l + (t - t0) / span * (W - PAD.l - PAD.r);
+  const y = q => H - PAD.b - (q / maxQ) * (H - PAD.t - PAD.b);
+
+  let out = "";
+
+  /* recessive gridlines + axis labels */
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const q = maxQ / ticks * i, yy = y(q);
+    out += `<line x1="${PAD.l}" x2="${W - PAD.r}" y1="${yy}" y2="${yy}"
+              stroke="${css('--grid')}" stroke-width="1"/>`;
+    out += `<text x="${PAD.l - 8}" y="${yy + 4}" text-anchor="end"
+              fill="${css('--muted')}" font-size="11">${Math.round(q)}</text>`;
+  }
+  out += `<line x1="${PAD.l}" x2="${W - PAD.r}" y1="${H - PAD.b}" y2="${H - PAD.b}"
+            stroke="${css('--axis')}" stroke-width="1"/>`;
+  /* Time ticks derived from the actual span, so they stay truthful when the
+     chart is showing four minutes rather than thirty. */
+  const spanMin = span / 60000;
+  [1, 0.66, 0.33, 0].forEach(frac => {
+    const minsAgo = spanMin * frac;
+    const xx = x(now - minsAgo * 60000);
+    const label = minsAgo < 0.5 ? "now" : `${Math.round(minsAgo)}m`;
+    // The rightmost tick sits exactly where the direct labels begin; anchoring
+    // it to its end keeps "now" inside the plot instead of under "north".
+    const anchor = frac === 0 ? "end" : "middle";
+    out += `<text x="${xx}" y="${H - PAD.b + 16}" text-anchor="${anchor}"
+              fill="${css('--muted')}" font-size="11">${label}</text>`;
+  });
+
+  /* 2px lines, plus a direct label at each line's end. The light-mode palette
+     carries a sub-3:1 contrast warning on two slots, so identity must not rest
+     on colour alone - these labels and the legend are that relief. */
+  series.forEach(cam => {
+    const pts = history[cam];
+    const d = pts.map((p, i) => `${i ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.q).toFixed(1)}`).join(" ");
+    const colour = css(SERIES_VAR[cam]);
+    out += `<path d="${d}" fill="none" stroke="${colour}" stroke-width="2"
+              stroke-linejoin="round" stroke-linecap="round"/>`;
+    const last = pts[pts.length - 1];
+    out += `<circle cx="${x(last.t)}" cy="${y(last.q)}" r="3.5" fill="${colour}"
+              stroke="${css('--surface')}" stroke-width="2"/>`;
+  });
+
+  /* Direct labels, de-collided. Approaches frequently share a queue length -
+     four series all sitting at zero overnight is the normal case - so the raw
+     end-point positions overlap into an unreadable smudge. Sort by y and push
+     each label down until it clears the one above by 13px. */
+  const labels = series
+    .map(cam => ({ cam, y: y(history[cam][history[cam].length - 1].q),
+                   x: x(history[cam][history[cam].length - 1].t) }))
+    .sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) {
+    if (labels[i].y - labels[i - 1].y < 13) labels[i].y = labels[i - 1].y + 13;
+  }
+  labels.forEach(l => {
+    out += `<text x="${Math.min(l.x, W - PAD.r) + 9}" y="${l.y + 4}"
+              fill="${css('--ink-2')}" font-size="11">${l.cam}</text>`;
+  });
+
+  out += `<line id="crosshair" y1="${PAD.t}" y2="${H - PAD.b}" stroke="${css('--axis')}"
+            stroke-width="1" opacity="0"/>`;
+  out += `<rect id="hit" x="${PAD.l}" y="${PAD.t}" width="${W - PAD.l - PAD.r}"
+            height="${H - PAD.t - PAD.b}" fill="transparent"/>`;
+  svg.innerHTML = out;
+
+  $("legend").innerHTML = series.map(cam =>
+    `<span><b style="background:var(${SERIES_VAR[cam]})"></b>${cam}</span>`).join("");
+
+  attachHover(svg, series, x, t0);
+  renderChartTable(series);
+}
+
+function attachHover(svg, series, x, t0) {
+  const hit = svg.querySelector("#hit"), cross = svg.querySelector("#crosshair"),
+        tip = $("tip");
+  hit.addEventListener("pointermove", ev => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    const t = t0 + (px - PAD.l) / (W - PAD.l - PAD.r) * WINDOW_MS;
+    cross.setAttribute("x1", px); cross.setAttribute("x2", px);
+    cross.setAttribute("opacity", "1");
+
+    const rows = series.map(cam => {
+      const pts = history[cam];
+      let best = pts[0];
+      for (const p of pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+      return `<div class="t-row"><span><b style="background:var(${SERIES_VAR[cam]})"></b>${cam}</span>
+              <span>${best.q}</span></div>`;
+    }).join("");
+    tip.innerHTML = `<div class="t-time">${new Date(t).toLocaleTimeString()}</div>${rows}`;
+    tip.style.opacity = "1";
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 160) + "px";
+    tip.style.top = (ev.clientY - 10) + "px";
+  });
+  hit.addEventListener("pointerleave", () => {
+    cross.setAttribute("opacity", "0"); tip.style.opacity = "0";
+  });
+}
+
+function renderChartTable(series) {
+  /* Only build it while it is actually open. Two reasons: rebuilding twenty
+     rows every second for a hidden element is pure waste, and Chromium lays
+     out the contents of a closed <details> in a context that ignores the
+     parent's width - so the hidden table was widening the whole page on a
+     phone while being invisible. Not rendering it is the honest fix. */
+  const details = $("table-details");
+  if (!details || !details.open) { $("chart-table").innerHTML = ""; return; }
+  const pts = history[series[0]] || [];
+  const step = Math.max(1, Math.floor(pts.length / 20));
+  let html = `<tr><th>Time</th>${series.map(s => `<th>${s}</th>`).join("")}</tr>`;
+  for (let i = pts.length - 1; i >= 0; i -= step) {
+    const t = pts[i].t;
+    html += `<tr><td>${new Date(t).toLocaleTimeString()}</td>` +
+      series.map(cam => {
+        const p = history[cam].reduce((a, b) =>
+          Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a, history[cam][0]);
+        return `<td>${p ? p.q : "-"}</td>`;
+      }).join("") + `</tr>`;
+  }
+  $("chart-table").innerHTML = html;
+}
+
+$("table-details").addEventListener("toggle", () => drawChart());
+seedHistory().then(() => { tick(); loadDecisions(); renderHealth(); });
+setInterval(tick, 1000);
+setInterval(loadDecisions, 5000);
+setInterval(renderHealth, 5000);
+</script>
+</body>
+</html>

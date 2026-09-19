@@ -1,0 +1,20 @@
+# Machine-learning dependencies - Phase 3 only.
+#
+#     pip install -r requirements-ml.txt
+#
+# Install this ONLY when you reach the traffic-prediction work. Nothing in
+# Phases 1, 2, 4 or 5 imports it, and the system runs fine on the rule-based
+# controller without it.
+#
+# TENSORFLOW AND YOUR PYTHON VERSION: TensorFlow lags new Python releases by
+# several months. Check `python --version` first - if pip cannot find a build,
+# that is the reason, not a broken environment. Options, in order of preference:
+#   1. create a venv on a Python version TensorFlow supports
+#   2. use PyTorch instead (an LSTM is about 30 lines either way)
+#   3. use scikit-learn's gradient boosting, which is often competitive on
+#      tabular time series like this and installs anywhere
+
+tensorflow>=2.15,<2.20
+scikit-learn>=1.3              # scaling, train/test split, baseline models
+matplotlib>=3.8                # training curves and evaluation plots
+joblib>=1.3                    # persisting fitted scalers alongside the model
