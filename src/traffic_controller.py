@@ -161,22 +161,44 @@ class ControlStrategy(ABC):
 
 class FixedTimeStrategy(ControlStrategy):
     """
-    The baseline: every phase runs for a fixed duration, traffic ignored.
+    The baseline: every phase runs for a preset duration, traffic ignored.
 
     This is what almost every junction in the world actually does, and it is the
-    thing your project has to beat. Keep it exercised - a baseline you cannot
+    thing this project has to beat. Keep it exercised - a baseline you cannot
     run is a baseline you cannot cite.
+
+    ACCEPTS PER-PHASE DURATIONS, and that matters for the comparison being
+    honest. Giving every phase the same green is not what an engineer does: a
+    main road carrying three times the side road gets proportionally more, and
+    Webster's method computes exactly how much. Measuring adaptive control
+    against one flat number would be measuring it against a strawman - the
+    difference would partly be the flat number's fault rather than fixed
+    timing's. Pass the output of traffic_engineering.webster_plan() here to get
+    the plan a competent engineer would actually have set.
     """
 
     name = "fixed"
 
-    def __init__(self, green_duration: Optional[float] = None):
+    def __init__(self, green_duration=None):
+        """
+        Args:
+            green_duration: seconds of green. Either a single number applied to
+                every phase, or a {phase_id: seconds} mapping - typically
+                WebsterPlan.green. None falls back to each phase's max_green.
+        """
         self.green_duration = green_duration
 
+    def _target_for(self, phase: Phase) -> float:
+        if isinstance(self.green_duration, dict):
+            target = self.green_duration.get(phase.id, phase.max_green)
+        elif self.green_duration:
+            target = self.green_duration
+        else:
+            target = phase.max_green
+        return max(phase.min_green, min(float(target), phase.max_green))
+
     def should_extend(self, phase, elapsed, snapshots) -> tuple:
-        target = self.green_duration if self.green_duration else phase.max_green
-        target = max(phase.min_green, min(target, phase.max_green))
-        return (elapsed < target, "fixed_schedule")
+        return (elapsed < self._target_for(phase), "fixed_schedule")
 
 
 class AdaptiveStrategy(ControlStrategy):
@@ -368,6 +390,7 @@ class IntersectionController:
         self._phase_waiting_since: Dict[str, float] = {p.id: 0.0 for p in self.phases}
         self.decisions: List[Decision] = []
         self._started = False
+        self._pending_override: Optional[str] = None
 
     @staticmethod
     def _overlapping_approaches(phases: Sequence[Phase]) -> set:
@@ -384,6 +407,30 @@ class IntersectionController:
     @property
     def current_phase(self) -> Phase:
         return self.phases[self._index]
+
+    @property
+    def pending_override(self) -> Optional[str]:
+        return self._pending_override
+
+    def request_phase(self, phase_id: Optional[str]) -> bool:
+        """
+        Ask for a phase to be served next. Returns False if it is unknown.
+
+        THE REQUEST IS QUEUED, NEVER APPLIED DIRECTLY. It is honoured only from
+        inside tick(), which means min_green still holds, the change still goes
+        through yellow and all-red, and a request for the phase that is already
+        running is simply ignored. An operator cannot use this to make an unsafe
+        transition, because it is not a way to set state - it is a way to
+        influence which branch the state machine takes next.
+        """
+        if phase_id is None:
+            self._pending_override = None
+            return True
+        if phase_id not in {p.id for p in self.phases}:
+            return False
+        self._pending_override = phase_id
+        log.info("[{}] override requested: serve '{}' next", self.signal_id, phase_id)
+        return True
 
     def elapsed(self, now: float) -> float:
         return now - self._state_since
@@ -426,7 +473,15 @@ class IntersectionController:
 
         if self.state is SignalState.ALL_RED:
             if elapsed >= phase.all_red:
-                self._index = (self._index + 1) % len(self.phases)
+                # An override chooses WHICH phase runs next; it never skips the
+                # clearance we have just completed.
+                if self._pending_override is not None:
+                    target = next((i for i, p in enumerate(self.phases)
+                                   if p.id == self._pending_override), None)
+                    self._index = target if target is not None else (self._index + 1) % len(self.phases)
+                    self._pending_override = None
+                else:
+                    self._index = (self._index + 1) % len(self.phases)
                 self._phase_waiting_since[self.current_phase.id] = 0.0
                 return self._transition(now, SignalState.GREEN, "phase_start", snapshots)
             return None
@@ -440,6 +495,12 @@ class IntersectionController:
         # This is the starvation cap and it is not negotiable.
         if elapsed >= phase.max_green:
             return self._transition(now, SignalState.YELLOW, "max_green", snapshots)
+
+        # An operator override is honoured here - past min_green, and by way of
+        # yellow like every other transition. Requesting the phase that is
+        # already running is a no-op rather than a restart.
+        if self._pending_override is not None and self._pending_override != phase.id:
+            return self._transition(now, SignalState.YELLOW, "manual_override", snapshots)
 
         # Between the two bounds, and only there, the strategy has a say.
         if now - self._last_decision_at < self.decision_interval:

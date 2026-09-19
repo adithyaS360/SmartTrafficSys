@@ -118,11 +118,24 @@ class ApproachSim:
         """Vehicles per second at this time of day."""
         return self.peak_vehicles_per_hour * diurnal_multiplier(hour) / SECONDS_PER_HOUR
 
-    def step(self, dt: float, hour: float, is_green: bool, rng: random.Random) -> None:
-        """Advance this approach by dt seconds."""
+    def step(self, dt: float, hour: float, is_green: bool, rng: random.Random,
+             arrivals: Optional[float] = None) -> None:
+        """
+        Advance this approach by dt seconds.
+
+        Args:
+            arrivals: vehicles arriving this step. Normally left as None, so the
+                approach draws its own Poisson sample. Pass a value to feed the
+                SAME arrivals to two approaches running in parallel - which is
+                what makes a live side-by-side comparison of two control
+                strategies honest. Without it each junction would draw its own
+                random traffic, and any difference in delay could just as
+                easily be luck as control quality.
+        """
         # --- arrivals: Poisson with the current rate ---
-        expected = self.arrival_rate(hour) * dt
-        arrivals = float(_poisson(expected, rng))
+        if arrivals is None:
+            expected = self.arrival_rate(hour) * dt
+            arrivals = float(_poisson(expected, rng))
         self.queue += arrivals
         self.arrived += arrivals
         self._recent_arrivals.append(arrivals)

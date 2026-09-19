@@ -1,0 +1,16 @@
+# Dependencies for the PUBLIC DEMO only (demo_app.py on Render).
+#
+# Deliberately tiny. The demo runs the simulator, the signal controller and a
+# Flask page - none of which need the computer-vision or machine-learning
+# stack. Verified by importing every module with cv2, ultralytics, tensorflow,
+# numpy and scipy blocked outright: it all still runs, and 12 simulated hours
+# complete in 0.47 seconds.
+#
+# That matters for hosting: requirements.txt would pull ~1.5 GB and exceed a
+# free instance's memory before serving a single request. This is about 15 MB.
+#
+# Use requirements.txt for local development, where you do want detection.
+
+Flask>=3.0,<4.0
+gunicorn>=21.2
+loguru>=0.7

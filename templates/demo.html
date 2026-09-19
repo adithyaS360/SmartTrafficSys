@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adaptive Traffic Control</title>
+<meta name="description" content="Live simulation comparing badly timed, Webster-optimised and adaptive traffic signal control on identical traffic.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230ca30c'/></svg>">
+<style>
+:root {
+  color-scheme: light;
+  --plane:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink-2:#52514e;
+  --muted:#898781; --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.10);
+  --adaptive:#2a78d6; --naive:#eb6834; --webster:#1baf7a;
+  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;
+  --radius:12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --plane:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink-2:#c3c2b7;
+    --muted:#898781; --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+    --adaptive:#3987e5; --naive:#d95926; --webster:#199e70;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink-2:#c3c2b7;
+  --muted:#898781; --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+  --adaptive:#3987e5; --naive:#d95926; --webster:#199e70;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:0 16px 56px;background:var(--plane);color:var(--ink);
+     font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1060px;margin:0 auto}
+a{color:var(--adaptive)}
+
+header{padding:28px 0 8px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+h1{font-size:23px;font-weight:650;margin:0;letter-spacing:-0.015em}
+.sub{color:var(--ink-2);font-size:15px;margin:2px 0 0;max-width:62ch}
+.links{margin-left:auto;display:flex;gap:10px;align-items:center;font-size:13px}
+.btn{background:var(--surface);border:1px solid var(--border);color:var(--ink-2);
+     border-radius:8px;padding:5px 11px;font:inherit;font-size:13px;cursor:pointer;
+     text-decoration:none;display:inline-block}
+.btn:hover{border-color:var(--muted);color:var(--ink)}
+
+.card{background:var(--surface);border:1px solid var(--border);
+      border-radius:var(--radius);padding:20px}
+.grid{display:grid;gap:14px}
+.grid>*{min-width:0}
+.three{grid-template-columns:repeat(3,1fr)}
+@media (max-width:900px){.three{grid-template-columns:1fr}}
+
+/* ---- hero ---- */
+.hero{margin:18px 0 14px;text-align:center;padding:26px 20px}
+.hero .big{font-size:clamp(38px,9vw,60px);font-weight:680;letter-spacing:-0.03em;
+           line-height:1;color:var(--adaptive)}
+.hero .cap{font-size:15px;color:var(--ink-2);margin-top:10px}
+.hero .sec{font-size:13px;color:var(--muted);margin-top:6px}
+.hero.warming .big{color:var(--muted);font-size:26px}
+
+/* ---- demand ---- */
+.demand{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center;
+        margin-bottom:6px}
+.demand button{background:transparent;border:1px solid var(--border);color:var(--ink-2);
+               border-radius:999px;padding:6px 15px;font:inherit;font-size:13px;cursor:pointer}
+.demand button:hover{border-color:var(--muted);color:var(--ink)}
+.demand button[aria-pressed="true"]{border-color:var(--adaptive);color:var(--adaptive);
+                                    font-weight:600}
+.note{text-align:center;color:var(--muted);font-size:13px;margin:10px 0 18px;
+      max-width:64ch;margin-inline:auto;min-height:2.6em}
+
+/* ---- junction panels ---- */
+.jtitle{display:flex;align-items:baseline;gap:8px;margin-bottom:3px}
+.jtitle h2{font-size:16px;font-weight:620;margin:0}
+.dot{width:9px;height:9px;border-radius:2px;display:inline-block}
+.jdesc{color:var(--muted);font-size:13px;margin:0 0 16px;min-height:3.2em}
+
+.junction{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;
+          max-width:190px;margin:0 auto 16px;aspect-ratio:1}
+.arm{border-radius:7px;display:grid;place-items:center;font-size:11px;font-weight:600;
+     color:#fff;background:var(--axis);transition:background 180ms ease;position:relative}
+.arm.green{background:var(--good)} .arm.yellow{background:var(--warning);color:#0b0b0b}
+.arm.red{background:var(--critical)}
+.arm.blank{background:transparent} .arm .q{font-size:15px;font-weight:680;line-height:1}
+.arm .lbl{font-size:9px;opacity:.85;letter-spacing:.06em}
+.arm.mid{background:transparent;color:var(--muted);font-size:12px;font-weight:600}
+
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px}
+.stat{text-align:center;padding:10px 6px;border:1px solid var(--border);border-radius:9px}
+.stat .v{font-size:22px;font-weight:640;letter-spacing:-0.02em}
+.stat .k{font-size:11px;color:var(--muted);margin-top:2px}
+
+/* ---- chart ---- */
+.chead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.chead h2{font-size:13px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;
+          color:var(--muted);margin:0}
+.legend{margin-left:auto;display:flex;gap:14px;font-size:12px;color:var(--ink-2)}
+.legend b{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;
+          vertical-align:-1px}
+svg{display:block;width:100%;height:auto;overflow:visible}
+
+/* ---- explainer ---- */
+.explain{margin-top:16px}
+.explain h2{font-size:13px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;
+            color:var(--muted);margin:0 0 12px}
+.explain p{margin:0 0 12px;color:var(--ink-2);max-width:72ch}
+.explain strong{color:var(--ink);font-weight:600}
+.caveat{border-left:2px solid var(--warning);padding-left:14px;margin-top:18px}
+footer{margin-top:24px;text-align:center;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Adaptive Traffic Control</h1>
+      <p class="sub">Three identical junctions receiving the same cars at the same moments.
+         One badly timed, one properly timed, one adaptive. Only the decision-making differs.</p>
+    </div>
+    <div class="links">
+      <a class="btn" id="repo" href="https://github.com/adithyaS360/SmartTrafficSys"
+         target="_blank" rel="noopener">Source</a>
+      <button class="btn" id="theme" type="button">Theme</button>
+    </div>
+  </header>
+
+  <section class="card hero warming" id="hero">
+    <div class="big" id="hero-big">starting the simulation…</div>
+    <div class="cap" id="hero-cap"></div>
+    <div class="sec" id="hero-sec"></div>
+  </section>
+
+  <div class="demand" id="demand"></div>
+  <p class="note" id="note"></p>
+
+  <div class="grid three" style="margin-bottom:14px">
+    <section class="card" id="panel-naive"></section>
+    <section class="card" id="panel-webster"></section>
+    <section class="card" id="panel-adaptive"></section>
+  </div>
+
+  <section class="card">
+    <div class="chead">
+      <h2>Vehicles waiting</h2>
+      <div class="legend">
+        <span><b style="background:var(--naive)"></b>Badly timed</span>
+        <span><b style="background:var(--webster)"></b>Properly timed</span>
+        <span><b style="background:var(--adaptive)"></b>Adaptive</span>
+      </div>
+    </div>
+    <svg id="chart" viewBox="0 0 900 260" role="img"
+         aria-label="Vehicles waiting over time: badly timed, properly timed and adaptive control"></svg>
+  </section>
+
+  <section class="card explain">
+    <h2>What you are looking at</h2>
+    <p>A traffic signal has to decide how long to hold each direction green. The three
+       junctions above face identical traffic and differ only in how they answer that.</p>
+    <p><strong>Badly timed</strong> gives every direction the same 30 seconds regardless of
+       demand — common wherever timings were set years ago and never revisited.
+       <strong>Properly timed</strong> is still fixed, but computed from the actual measured
+       flows using <a href="https://www.apsed.in/post/traffic-signal-design-webster-s-formula-for-optimum-cycle-length"
+       target="_blank" rel="noopener">Webster's method</a>, the standard since 1958.
+       <strong>Adaptive</strong> extends green while vehicles are still queued and ends it
+       early once the road clears.</p>
+    <p>All three receive <strong>exactly the same vehicles at exactly the same moments</strong>.
+       If each got its own random traffic, the difference between them could just as easily
+       be luck. Feeding all three one arrival stream means every second of divergence comes
+       from the decision-making and nothing else.</p>
+    <p><strong>The result is smaller than it first looks, and that is the interesting part.</strong>
+       Measured against the badly timed junction, adaptive control looks about 38% better at
+       every demand level. But most of that margin belongs to the bad timing, not to adaptive
+       control: simply recomputing the fixed plan from the measured flows captures the bulk of
+       it, for the price of a traffic survey and no new hardware at all.</p>
+    <p>Against a <em>properly</em> timed plan, adaptive adds roughly <strong>2% at light demand
+       and 24% at rush hour</strong>. That pattern makes sense — a well-proportioned fixed plan
+       already matches the average demand ratio, so adaptive only earns its keep where the
+       variance matters. Try <strong>Light</strong> and then <strong>Rush hour</strong> and
+       watch the gap open.</p>
+    <p>The practical reading, if you have a junction in mind: <strong>retime it first.</strong>
+       It is cheap, it needs no equipment, and it recovers most of what is available. Adaptive
+       control buys you the peak.</p>
+    <p>The adaptive controller cannot do whatever it likes. Green is never shorter than 10
+       seconds — drivers who have started moving need time to clear — and never longer than
+       50, so one busy road cannot starve the other. Those limits live in the signal's state
+       machine rather than the algorithm, so a bad decision can waste time but cannot create
+       an unsafe crossing.</p>
+    <div class="caveat">
+      <p style="margin:0"><strong>This is a simulation, not live traffic.</strong> No camera
+         is attached to it. The detection side of the project — YOLOv8 finding vehicles,
+         tracking them between frames, counting them across a stop line — was validated
+         separately against real footage, but control cannot be measured on a recording:
+         the cars in a video do what they did regardless of what the signal does. Measuring
+         a controller needs a world that reacts, which is what you are watching.</p>
+    </div>
+  </section>
+
+  <footer>
+    Simulation runs at <span id="speed">8</span>× real time ·
+    <a href="https://github.com/adithyaS360/SmartTrafficSys" target="_blank" rel="noopener">source and full write-up on GitHub</a>
+  </footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+$("speed").textContent = {{ speed | tojson }};
+
+try { const t = localStorage.getItem("theme"); if (t) document.documentElement.setAttribute("data-theme", t); } catch(e){}
+$("theme").onclick = () => {
+  const dark = document.documentElement.getAttribute("data-theme") === "dark"
+    || (!document.documentElement.hasAttribute("data-theme")
+        && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+  try { localStorage.setItem("theme", dark ? "light" : "dark"); } catch(e){}
+  if (last) draw(last);
+};
+
+let last = null, busy = false;
+
+async function poll() {
+  if (busy) return;
+  try {
+    const res = await fetch("/api/demo");
+    const body = await res.json();
+    last = body.data;
+    draw(last);
+  } catch (e) { /* cold start or a blip - the next poll will catch up */ }
+}
+
+async function post(url, payload) {
+  busy = true;
+  $("hero").classList.add("warming");
+  $("hero-big").textContent = "re-running…";
+  try {
+    const res = await fetch(url, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload || {})
+    });
+    last = (await res.json()).data;
+    draw(last);
+  } finally { busy = false; }
+}
+
+/* ---- render ---------------------------------------------------------- */
+
+function draw(d) {
+  drawHero(d);
+  drawDemand(d);
+  drawPanel("naive", d.junctions.naive, "--naive");
+  drawPanel("webster", d.junctions.webster, "--webster");
+  drawPanel("adaptive", d.junctions.adaptive, "--adaptive");
+  drawChart(d.history);
+}
+
+function drawHero(d) {
+  const c = d.comparison;
+  if (c.vs_webster_percent === null) {
+    $("hero").classList.add("warming");
+    $("hero-big").textContent = "measuring…";
+    $("hero-cap").textContent = "give it a few seconds of traffic";
+    $("hero-sec").textContent = "";
+    return;
+  }
+  $("hero").classList.remove("warming");
+
+  // Lead with the comparison against a PROPERLY timed plan. Leading with the
+  // badly-timed number would be a bigger headline and a misleading one - most
+  // of that margin is the bad timing's fault, not adaptive control's.
+  $("hero-big").textContent = c.vs_webster_percent.toFixed(0) + "% less waiting";
+  $("hero-cap").innerHTML =
+    `than a <strong>properly timed</strong> fixed plan &mdash;
+     ${c.adaptive_delay.toFixed(1)}s average wait versus ${c.webster_delay.toFixed(1)}s,
+     saving ${Math.abs(c.seconds_saved_vs_webster).toFixed(1)}s per vehicle.`;
+  $("hero-sec").innerHTML =
+    `Retiming the badly-set junction alone already saves
+     <strong>${c.seconds_saved_by_retiming.toFixed(1)}s</strong> per vehicle
+     (${c.naive_delay.toFixed(1)}s &rarr; ${c.webster_delay.toFixed(1)}s).
+     That part costs nothing but a survey.`;
+}
+
+function drawDemand(d) {
+  const box = $("demand");
+  if (!box.dataset.built) {
+    box.dataset.built = "1";
+    d.demand_options.forEach(o => {
+      const b = document.createElement("button");
+      b.textContent = o.label; b.dataset.key = o.key;
+      b.onclick = () => post("/api/demo/demand", {demand: o.key});
+      box.appendChild(b);
+    });
+  }
+  box.querySelectorAll("button").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.key === d.demand)));
+  $("note").textContent = d.demand_note;
+}
+
+function drawPanel(key, j, colourVar) {
+  const arm = cam => {
+    const a = j.approaches[cam];
+    return `<div class="arm ${a.signal}"><span class="q">${a.queue}</span>
+            <span class="lbl">${cam[0].toUpperCase()}</span></div>`;
+  };
+  $("panel-" + key).innerHTML = `
+    <div class="jtitle">
+      <span class="dot" style="background:var(${colourVar})"></span>
+      <h2>${j.label}</h2>
+    </div>
+    <p class="jdesc">${j.description}</p>
+    <div class="junction">
+      <div class="arm blank"></div>${arm("north")}<div class="arm blank"></div>
+      ${arm("west")}
+      <div class="arm mid">${j.signal.phase.toUpperCase()}<br>${j.signal.elapsed.toFixed(0)}s</div>
+      ${arm("east")}
+      <div class="arm blank"></div>${arm("south")}<div class="arm blank"></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="v">${j.totals.average_delay.toFixed(1)}s</div>
+        <div class="k">average wait</div></div>
+      <div class="stat"><div class="v">${j.totals.queue.toFixed(0)}</div>
+        <div class="k">waiting now</div></div>
+    </div>`;
+}
+
+/* Hand-rolled SVG: one chart does not justify a charting library, and keeping
+   the page self-contained means no CDN to be slow or disappear. */
+const W = 900, H = 260, PAD = {l:44, r:78, t:14, b:28};
+
+function drawChart(hist) {
+  const svg = $("chart");
+  if (!hist || hist.length < 2) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle"
+      fill="${css('--muted')}" font-size="13">collecting…</text>`;
+    return;
+  }
+  const t0 = hist[0].t, t1 = hist[hist.length-1].t;
+  const span = Math.max(t1 - t0, 1);
+  const maxQ = Math.max(6, ...hist.flatMap(p => [p.naive, p.webster, p.adaptive])) * 1.15;
+  const x = t => PAD.l + (t - t0) / span * (W - PAD.l - PAD.r);
+  const y = q => H - PAD.b - (q / maxQ) * (H - PAD.t - PAD.b);
+
+  let out = "";
+  for (let i = 0; i <= 4; i++) {
+    const q = maxQ / 4 * i, yy = y(q);
+    out += `<line x1="${PAD.l}" x2="${W-PAD.r}" y1="${yy}" y2="${yy}"
+              stroke="${css('--grid')}" stroke-width="1"/>
+            <text x="${PAD.l-9}" y="${yy+4}" text-anchor="end" fill="${css('--muted')}"
+              font-size="11">${Math.round(q)}</text>`;
+  }
+  out += `<line x1="${PAD.l}" x2="${W-PAD.r}" y1="${H-PAD.b}" y2="${H-PAD.b}"
+            stroke="${css('--axis')}" stroke-width="1"/>`;
+  [0, 0.5, 1].forEach(f => {
+    const minsAgo = (span * (1 - f)) / 60;
+    out += `<text x="${x(t0 + span*f)}" y="${H-PAD.b+16}"
+              text-anchor="${f === 1 ? 'end' : 'middle'}" fill="${css('--muted')}"
+              font-size="11">${minsAgo < 0.3 ? 'now' : Math.round(minsAgo)+'m ago'}</text>`;
+  });
+
+  // Fixed drawn first so adaptive sits on top - the line people came to see.
+  const series = [["naive","--naive","Badly timed"],
+                  ["webster","--webster","Properly timed"],
+                  ["adaptive","--adaptive","Adaptive"]];
+  const lastPt = hist[hist.length-1];
+  series.forEach(([k,v]) => {
+    const colour = css(v);
+    const d = hist.map((p,i) => `${i?'L':'M'}${x(p.t).toFixed(1)},${y(p[k]).toFixed(1)}`).join(" ");
+    out += `<path d="${d}" fill="none" stroke="${colour}" stroke-width="2"
+              stroke-linejoin="round" stroke-linecap="round"/>`;
+    out += `<circle cx="${x(lastPt.t)}" cy="${y(lastPt[k])}" r="3.5" fill="${colour}"
+              stroke="${css('--surface')}" stroke-width="2"/>`;
+  });
+
+  // De-collide the end labels. The two queues converge constantly - every time
+  // the adaptive junction has just cleared and the fixed one is about to - so
+  // without this the two words overlap into an unreadable smudge several times
+  // a minute, on the exact metric the page exists to show.
+  const labels = series
+    .map(([k,v,label]) => ({label, colour: css(v), y: y(lastPt[k])}))
+    .sort((a,b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) {
+    if (labels[i].y - labels[i-1].y < 15) labels[i].y = labels[i-1].y + 15;
+  }
+  labels.forEach(l => {
+    out += `<text x="${x(lastPt.t)+9}" y="${l.y+4}" fill="${l.colour}"
+              font-size="12" font-weight="600">${l.label}</text>`;
+  });
+  svg.innerHTML = out;
+}
+
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>

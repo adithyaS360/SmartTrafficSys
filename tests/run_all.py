@@ -26,6 +26,7 @@ SUITES = [
     ("test_phase3.py", "signal safety invariants, simulator", True),
     ("test_phase3b.py", "features, leakage, baselines, ML strategy", True),
     ("test_phase4.py", "API contract, override safety", False),
+    ("test_phase5.py", "PCU, Webster timing, three-way demo", True),
 ]
 
 

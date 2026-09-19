@@ -14,25 +14,73 @@ limitations are stated rather than omitted.
 *Live dashboard: signal state, per-approach queues, flow over time, and the
 controller's decision log with the reason each phase ended.*
 
+**→ Live demo: _paste your Render URL here once deployed_**
+
+---
+
+## Try it in thirty seconds
+
+The public demo runs three identical junctions side by side — same vehicles
+arriving at the same moments — one badly timed, one timed properly with Webster's
+method, one adaptive. Change the traffic level and watch the gaps open.
+
+```bash
+pip install -r requirements-deploy.txt
+python demo_app.py          # http://127.0.0.1:5001
+```
+
+Feeding all three a single arrival stream is what makes it a measurement rather
+than a demonstration: if each drew its own random traffic, the differences could
+just as easily be luck.
+
+**The middle junction is why the comparison is honest.** Measured against an
+arbitrary fixed 30-second plan, adaptive control looks ~38% better at every
+demand level — but most of that margin belongs to the arbitrary number. Against a
+plan computed from the measured flows with Webster's method, the real figure is
+**1.8% at light demand and 24% at rush hour**. Smaller, load-dependent, and true.
+
+The practical reading: retiming a badly-set junction recovers most of what is
+available, costs nothing but a survey, and needs no new hardware. Adaptive control
+buys the peak.
+
+Deploying it needs no database and no computer-vision stack — every module runs
+with OpenCV, ultralytics, TensorFlow, numpy and scipy absent, which takes the
+image from roughly 1.5 GB to about 15 MB. See `render.yaml`.
+
 ---
 
 ## Results
 
-**Adaptive control reduces average delay by 29.6% against the best fixed-time
-schedule**, over 12 simulated hours at an asymmetric junction. Every strategy
-faces an identical arrival sequence (same RNG seed), so the comparison is a
-measurement, not a coincidence.
+**Adaptive control reduces average delay by 7.0% against a properly timed fixed
+plan, and 29.6% against the best arbitrary one.** Both figures are below; reporting
+only the second would be the easy mistake, and a misleading one.
+
+Over 12 simulated hours at an asymmetric junction, every strategy facing an
+identical arrival sequence (same RNG seed), so the comparison is a measurement
+rather than a coincidence:
 
 | strategy | avg delay | vehicles served | peak queue |
 |---|---:|---:|---:|
 | fixed 25s | 13.6 s | 16,418 | 20.0 |
 | fixed 35s | 16.3 s | 16,413 | 23.0 |
 | fixed 50s | 20.8 s | 16,420 | 31.0 |
+| **Webster-timed fixed** (43s cycle, 21s/14s split) | **10.3 s** | 16,424 | 15.0 |
 | **adaptive** | **9.6 s** | **16,448** | **14.0** |
 
-Delay falls without sacrificing throughput — adaptive serves slightly *more*
-vehicles — and peak queue drops from 20 to 14, so the gain shows up in two
-independent measures.
+**Most of the available gain comes from retiming, not from adaptation.** Simply
+recomputing the fixed plan from the measured flows with Webster's method takes
+delay from 13.6s to 10.3s — a **24.3%** reduction for the cost of a traffic survey
+and no new hardware. Adaptive control then adds a further **7.0%** on top.
+
+That split is load-dependent, and the demo lets you see it: against a properly
+timed plan adaptive gains about **1.8% at light demand and 24% at rush hour**. A
+well-proportioned fixed plan already matches the *average* demand ratio, so
+adaptation only earns its keep where the *variance* does.
+
+The practical reading, for anyone with a real junction in mind: **retime it first.**
+
+Delay also falls without sacrificing throughput — adaptive serves slightly *more*
+vehicles — and peak queue drops, so the gain shows up in two independent measures.
 
 ```
 python tools/simulate.py compare --hours 12
@@ -161,7 +209,7 @@ the controller does not change.
 | `python tools/simulate.py compare` | Fixed vs adaptive delay comparison |
 | `python tools/simulate.py generate --days 21` | Write simulated history for model training |
 | `python tools/train.py --camera north` | Train and evaluate forecasters against baselines |
-| `python tests/run_all.py` | 174 tests across five suites |
+| `python tests/run_all.py` | 214 tests across six suites |
 
 ---
 
@@ -242,11 +290,13 @@ src/
   api.py                  REST endpoints
   database/               SQLAlchemy models, buffered writer, queries
   models/                 features, baselines, LSTM
+  traffic_engineering.py  PCU conversion, saturation flow, Webster timing
+  demo.py                 three-way public comparison
   utils/                  config loading and validation, logging
 alembic/                  schema migrations
 templates/dashboard.html  live dashboard
 tools/                    doctor, calibrate, check_footage, simulate, train
-tests/                    174 tests; run_all.py runs them
+tests/                    214 tests; run_all.py runs them
 app.py                    entry point
 ```
 
@@ -277,7 +327,7 @@ rather than becoming a zero that would read as a traffic jam.
 ## Testing
 
 ```bash
-python tests/run_all.py          # all 174
+python tests/run_all.py          # all 214
 python tests/run_all.py --fast   # skip the slow simulation suites
 ```
 
@@ -293,6 +343,23 @@ equally. A strategy that behaves itself proves nothing about whether the machine
 would stop one that did not.
 
 ---
+
+## References
+
+Signal timing follows Webster (1958), *Traffic Signal Settings*, Road Research
+Laboratory Technical Paper 39 — the standard method for computing optimum cycle
+length and green splits from measured flows.
+
+Passenger-car-unit factors are IRC 106-1990 (Indian Roads Congress), which is what
+makes the arithmetic valid for Indian traffic: a two-wheeler is 0.5 PCU and an
+auto-rickshaw 1.2, and a junction where those dominate behaves nothing like the
+Western defaults most tutorials assume. The vehicle composition used by the demo
+reflects mixes reported in published Indian junction surveys.
+
+That is also where the detector's classification accuracy stops being a footnote:
+COCO has no auto-rickshaw class, so YOLO reads an auto as a car or a motorcycle.
+That error propagates into the PCU total, the saturation ratio, and every timing
+derived from them.
 
 ## Acknowledgements
 

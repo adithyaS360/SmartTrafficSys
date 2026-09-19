@@ -1,0 +1,44 @@
+# Render deployment for the public demo.
+#
+# In Render: New -> Blueprint -> point it at this repository. It reads this file
+# and creates the service. Nothing else to configure.
+#
+# NOTE ON THE FREE PLAN: the instance sleeps after ~15 minutes with no traffic
+# and takes up to a minute to wake. The first visitor after a quiet spell waits
+# for that. Everything here is built to survive it - the demo holds no state
+# between restarts and re-seeds itself on boot - but if you are sending the link
+# to someone who matters, open it yourself a minute beforehand.
+
+services:
+  - type: web
+    name: adaptive-traffic-demo
+    runtime: python
+    plan: free
+    region: singapore          # closest Render region to India; change if you prefer
+    branch: main
+
+    buildCommand: pip install -r requirements-deploy.txt
+
+    # ONE WORKER, deliberately. The simulation runs in a background thread
+    # inside the web process, so a second worker would mean a second
+    # independent simulation, two controllers disagreeing about the current
+    # phase, and a page showing whichever one happened to answer. Threads
+    # handle the concurrency instead - each request takes a fraction of a
+    # millisecond and the rest of the time the process is idle.
+    startCommand: gunicorn --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT demo_app:app
+
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: DEMO_SPEED
+        value: "8"             # simulated seconds per real second
+      - key: DEMO_WARMUP_MINUTES
+        value: "12"            # simulated instantly on boot, so a cold start is never empty
+      - key: DEMO_IDLE_PAUSE
+        value: "90"            # stop simulating 90s after the last visitor leaves
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: PYTHONUNBUFFERED
+        value: "1"             # so logs reach Render's console immediately
