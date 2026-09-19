@@ -29,6 +29,7 @@ psycopg2-binary>=2.9           # Postgres driver; unused while database.type is 
 Flask>=3.0,<4.0
 Flask-SocketIO>=5.3            # websockets for the live dashboard
 python-socketio>=5.10
+gunicorn
 
 # --- config and logging ---
 PyYAML>=6.0
